@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import pc from "picocolors";
-import { assertInsideGitRepo, deleteBranch, detectBaseBranch, listBranches } from "./git.js";
+import { deleteBranch, loadBranches } from "./git.js";
 import { confirmDeletion, confirmForceDelete, promptBranchSelection } from "./ui.js";
 import type { DeleteResult } from "./types.js";
 
@@ -84,16 +84,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  assertInsideGitRepo();
+  const { branches: allBranches, baseBranch } = await loadBranches(options.base);
 
-  const baseBranch = options.base ?? detectBaseBranch();
   const protectedBranches = new Set([
     ...DEFAULT_PROTECTED_BRANCHES,
     ...(baseBranch ? [baseBranch] : []),
     ...options.protect,
   ]);
 
-  const allBranches = listBranches(baseBranch);
   if (allBranches.length === 0) {
     console.log("No local branches found.");
     return;
@@ -146,11 +144,11 @@ async function main(): Promise<void> {
 
   const results: DeleteResult[] = [];
   for (const name of selected) {
-    let result = deleteBranch(name, false);
+    let result = await deleteBranch(name, false);
     if (result.status === "failed") {
       const shouldForce = options.force || (await confirmForceDelete(name));
       if (shouldForce) {
-        result = deleteBranch(name, true);
+        result = await deleteBranch(name, true);
       }
     }
     results.push(result);
