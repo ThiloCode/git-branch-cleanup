@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import pc from "picocolors";
 import { deleteBranch, loadBranches } from "./git.js";
-import { confirmDeletion, confirmForceDelete, promptBranchSelection } from "./ui.js";
+import { withSpinner } from "./spinner.js";
 import type { DeleteResult } from "./types.js";
 
 const DEFAULT_PROTECTED_BRANCHES = ["main", "master", "develop"];
@@ -84,7 +84,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { branches: allBranches, baseBranch } = await loadBranches(options.base);
+  const [{ branches: allBranches, baseBranch }, ui] = await withSpinner(
+    "Loading branches...",
+    () => Promise.all([loadBranches(options.base), import("./ui.js")]),
+  );
+  const { confirmDeletion, confirmForceDelete, promptBranchSelection } = ui;
 
   const protectedBranches = new Set([
     ...DEFAULT_PROTECTED_BRANCHES,
@@ -144,11 +148,11 @@ async function main(): Promise<void> {
 
   const results: DeleteResult[] = [];
   for (const name of selected) {
-    let result = await deleteBranch(name, false);
+    let result = await withSpinner(`Deleting ${name}...`, () => deleteBranch(name, false));
     if (result.status === "failed") {
       const shouldForce = options.force || (await confirmForceDelete(name));
       if (shouldForce) {
-        result = await deleteBranch(name, true);
+        result = await withSpinner(`Force-deleting ${name}...`, () => deleteBranch(name, true));
       }
     }
     results.push(result);
