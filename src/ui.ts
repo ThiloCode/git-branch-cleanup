@@ -1,8 +1,27 @@
 import { checkbox, confirm, Separator } from "@inquirer/prompts";
 import pc from "picocolors";
-import type { BranchInfo } from "./types.js";
+import { worktreeLabel } from "./format.js";
+import type { BranchInfo, CleanupTarget, WorktreeInfo } from "./types.js";
 
-function formatChoiceLabel(branch: BranchInfo): string {
+function lossWarnings(worktree: WorktreeInfo): string[] {
+  const warnings: string[] = [];
+  if (worktree.commitsNotOnAnyBranch > 0) {
+    warnings.push(`${worktree.commitsNotOnAnyBranch} commit(s) not on any branch`);
+  }
+  if (worktree.hasUncommittedChanges) {
+    warnings.push("uncommitted changes");
+  }
+  return warnings;
+}
+
+function worktreeDetails(worktree: WorktreeInfo): string[] {
+  return [
+    ...(worktree.isMissing ? [pc.dim("folder missing")] : []),
+    ...lossWarnings(worktree).map((warning) => pc.red(warning)),
+  ];
+}
+
+function formatBranchLabel(branch: BranchInfo): string {
   const details: string[] = [];
   if (branch.isMerged) {
     details.push(pc.green("merged"));
@@ -10,15 +29,30 @@ function formatChoiceLabel(branch: BranchInfo): string {
     const { ahead, behind } = branch.aheadBehind;
     details.push(pc.yellow(`${ahead} ahead, ${behind} behind`));
   }
+  if (branch.worktree) {
+    details.push(pc.cyan(worktreeLabel(branch.worktree.path)), ...worktreeDetails(branch.worktree));
+  }
   details.push(pc.dim(branch.lastCommitRelativeDate));
   return `${branch.name}  ${pc.dim("·")}  ${details.join(pc.dim(" · "))}`;
 }
 
-export async function promptBranchSelection(branches: BranchInfo[]): Promise<string[]> {
+function formatWorktreeLabel(worktree: WorktreeInfo): string {
+  const details = [pc.dim(`detached at ${worktree.head.slice(0, 7)}`), ...worktreeDetails(worktree)];
+  return `${worktreeLabel(worktree.path)}  ${pc.dim("·")}  ${details.join(pc.dim(" · "))}`;
+}
+
+function canLoseWork(worktree: WorktreeInfo | undefined): boolean {
+  return worktree !== undefined && lossWarnings(worktree).length > 0;
+}
+
+export async function promptCleanupSelection(
+  branches: BranchInfo[],
+  worktrees: WorktreeInfo[],
+): Promise<CleanupTarget[]> {
   const current = branches.find((branch) => branch.isCurrent);
   const selectable = branches.filter((branch) => !branch.isCurrent);
 
-  if (selectable.length === 0) {
+  if (selectable.length === 0 && worktrees.length === 0) {
     return [];
   }
 
@@ -27,29 +61,47 @@ export async function promptBranchSelection(branches: BranchInfo[]): Promise<str
       ? [new Separator(pc.dim(`(current branch, not selectable: ${current.name})`))]
       : []),
     ...selectable.map((branch) => ({
-      name: formatChoiceLabel(branch),
-      value: branch.name,
-      checked: branch.isMerged,
+      name: formatBranchLabel(branch),
+      short: branch.name,
+      value: { kind: "branch", name: branch.name, worktree: branch.worktree } as CleanupTarget,
+      checked: branch.isMerged && !canLoseWork(branch.worktree),
+    })),
+    ...(worktrees.length > 0 ? [new Separator(pc.dim("── Worktrees without a branch ──"))] : []),
+    ...worktrees.map((worktree) => ({
+      name: formatWorktreeLabel(worktree),
+      short: worktreeLabel(worktree.path),
+      value: { kind: "worktree", worktree } as CleanupTarget,
+      checked: worktree.isMissing && !canLoseWork(worktree),
     })),
   ];
 
   return checkbox({
-    message: "Select branches to delete (space to toggle, enter to confirm)",
+    message: "Select branches and worktrees to delete (space to toggle, enter to confirm)",
     choices,
     pageSize: 20,
     loop: false,
   });
 }
 
-export async function confirmDeletion(selected: string[]): Promise<boolean> {
+function formatTargetSummary(target: CleanupTarget): string {
+  const worktree = target.worktree;
+  const label =
+    target.kind === "branch"
+      ? target.name + (worktree ? pc.dim(` and ${worktreeLabel(worktree.path)}`) : "")
+      : worktreeLabel(target.worktree.path);
+  const warnings = worktree ? lossWarnings(worktree) : [];
+  return warnings.length > 0 ? `${label} ${pc.red(`(${warnings.join(", ")} will be lost)`)}` : label;
+}
+
+export async function confirmDeletion(selected: CleanupTarget[]): Promise<boolean> {
   if (selected.length === 0) {
     return false;
   }
 
   console.log("");
-  console.log(pc.bold(`About to delete ${selected.length} branch(es):`));
-  for (const name of selected) {
-    console.log(`  ${pc.red("-")} ${name}`);
+  console.log(pc.bold(`About to delete ${selected.length} item(s):`));
+  for (const target of selected) {
+    console.log(`  ${pc.red("-")} ${formatTargetSummary(target)}`);
   }
   console.log("");
 

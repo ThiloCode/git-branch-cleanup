@@ -1,6 +1,6 @@
 # git-branch-cleanup
 
-Interactive CLI to review and delete local git branches. Navigate with the
+Interactive CLI to review and delete local git branches and worktrees. Navigate with the
 arrow keys, toggle branches for deletion with the spacebar, confirm with
 enter.
 
@@ -28,6 +28,20 @@ git-branch-cleanup
   the detected base branch) are excluded from selection.
 - A branch that isn't fully merged fails a safe delete (`git branch -d`); you
   are asked per branch whether to force-delete it (`git branch -D`).
+
+### Worktrees
+
+- Deleting a branch that is checked out in a linked worktree removes that
+  worktree first (`git worktree remove`), then deletes the branch.
+- Worktrees without a branch (detached HEAD) are listed in their own section.
+  Only those whose folder no longer exists are pre-checked.
+- Each worktree row shows whether it has uncommitted changes, whether its
+  folder is missing, and, for detached worktrees, how many commits aren't on
+  any branch, tag, or remote branch. Removing such a worktree loses those
+  commits and changes, so these rows are never pre-checked, even when the
+  branch is merged. Selecting one force-removes it without asking again.
+- Branches checked out in the main worktree, in a locked worktree, or in the
+  worktree you run the tool from can't be selected.
 
 ### Options
 

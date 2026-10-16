@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import pc from "picocolors";
-import { deleteBranch, loadBranches } from "./git.js";
+import { worktreeLabel } from "./format.js";
+import { deleteBranch, isRemovable, loadBranches, removeWorktree } from "./git.js";
 import { withSpinner } from "./spinner.js";
-import type { DeleteResult } from "./types.js";
+import type { BranchInfo, DeleteResult, WorktreeInfo } from "./types.js";
 
 const DEFAULT_PROTECTED_BRANCHES = ["main", "master", "develop"];
 
@@ -45,7 +46,7 @@ function parseArgs(argv: string[]): CliOptions {
 function printHelp(): void {
   console.log(`git-branch-cleanup
 
-Interactively review and delete local git branches.
+Interactively review and delete local git branches and their worktrees.
 
 Usage:
   git-branch-cleanup [options]
@@ -64,17 +65,39 @@ function printSummary(results: DeleteResult[]): void {
 
   console.log("");
   if (deleted.length > 0) {
-    console.log(pc.green(`Deleted ${deleted.length} branch(es):`));
+    console.log(pc.green(`Deleted ${deleted.length} item(s):`));
     for (const r of deleted) {
       console.log(`  ${pc.green("✓")} ${r.name}`);
     }
   }
   if (failed.length > 0) {
-    console.log(pc.red(`Skipped ${failed.length} branch(es):`));
+    console.log(pc.red(`Skipped ${failed.length} item(s):`));
     for (const r of failed) {
       console.log(`  ${pc.red("✗")} ${r.name} — ${r.error}`);
     }
   }
+}
+
+function isBlockedByWorktree(branch: BranchInfo): boolean {
+  return branch.worktree !== undefined && !branch.worktree.isCurrent && !isRemovable(branch.worktree);
+}
+
+async function removeWorktreeWithSpinner(worktree: WorktreeInfo): Promise<DeleteResult> {
+  const label = worktreeLabel(worktree.path);
+  const result = await withSpinner(`Removing ${label}...`, () => removeWorktree(worktree));
+  return { ...result, name: label };
+}
+
+async function deleteBranchWithFallback(
+  name: string,
+  force: boolean,
+  confirmForceDelete: (name: string) => Promise<boolean>,
+): Promise<DeleteResult> {
+  const result = await withSpinner(`Deleting ${name}...`, () => deleteBranch(name, false));
+  if (result.status === "deleted" || !(force || (await confirmForceDelete(name)))) {
+    return result;
+  }
+  return withSpinner(`Force-deleting ${name}...`, () => deleteBranch(name, true));
 }
 
 async function main(): Promise<void> {
@@ -84,11 +107,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  const [{ branches: allBranches, baseBranch }, ui] = await withSpinner(
+  const [{ branches: allBranches, detachedWorktrees, baseBranch }, ui] = await withSpinner(
     "Loading branches...",
     () => Promise.all([loadBranches(options.base), import("./ui.js")]),
   );
-  const { confirmDeletion, confirmForceDelete, promptBranchSelection } = ui;
+  const { confirmDeletion, confirmForceDelete, promptCleanupSelection } = ui;
 
   const protectedBranches = new Set([
     ...DEFAULT_PROTECTED_BRANCHES,
@@ -96,7 +119,7 @@ async function main(): Promise<void> {
     ...options.protect,
   ]);
 
-  if (allBranches.length === 0) {
+  if (allBranches.length === 0 && detachedWorktrees.length === 0) {
     console.log("No local branches found.");
     return;
   }
@@ -112,23 +135,36 @@ async function main(): Promise<void> {
   }
 
   const current = allBranches.find((branch) => branch.isCurrent);
-  const eligible = allBranches.filter(
-    (branch) => !branch.isCurrent && !protectedBranches.has(branch.name),
+  const others = allBranches.filter((branch) => !branch.isCurrent);
+  const excludedProtected = others.filter((branch) => protectedBranches.has(branch.name));
+  const blockedByWorktree = others.filter(
+    (branch) => !protectedBranches.has(branch.name) && isBlockedByWorktree(branch),
   );
-  const excludedProtected = allBranches.filter(
-    (branch) => !branch.isCurrent && protectedBranches.has(branch.name),
+  const eligible = others.filter(
+    (branch) => !protectedBranches.has(branch.name) && !isBlockedByWorktree(branch),
   );
+  const eligibleWorktrees = detachedWorktrees.filter(isRemovable);
 
   if (excludedProtected.length > 0) {
     console.log(pc.dim(`Protected (not shown): ${excludedProtected.map((b) => b.name).join(", ")}`));
   }
+  if (blockedByWorktree.length > 0) {
+    console.log(
+      pc.dim(
+        `Checked out in the main or a locked worktree (not shown): ${blockedByWorktree.map((b) => b.name).join(", ")}`,
+      ),
+    );
+  }
 
-  if (eligible.length === 0) {
-    console.log("No branches available for deletion.");
+  if (eligible.length === 0 && eligibleWorktrees.length === 0) {
+    console.log("No branches or worktrees available for deletion.");
     return;
   }
 
-  const selected = await promptBranchSelection(current ? [current, ...eligible] : eligible);
+  const selected = await promptCleanupSelection(
+    current ? [current, ...eligible] : eligible,
+    eligibleWorktrees,
+  );
 
   if (selected.length === 0) {
     console.log("Nothing selected. Exiting.");
@@ -142,20 +178,22 @@ async function main(): Promise<void> {
   }
 
   if (options.dryRun) {
-    console.log(pc.yellow("Dry run: no branches were deleted."));
+    console.log(pc.yellow("Dry run: nothing was deleted."));
     return;
   }
 
   const results: DeleteResult[] = [];
-  for (const name of selected) {
-    let result = await withSpinner(`Deleting ${name}...`, () => deleteBranch(name, false));
-    if (result.status === "failed") {
-      const shouldForce = options.force || (await confirmForceDelete(name));
-      if (shouldForce) {
-        result = await withSpinner(`Force-deleting ${name}...`, () => deleteBranch(name, true));
+  for (const target of selected) {
+    if (target.worktree) {
+      const removal = await removeWorktreeWithSpinner(target.worktree);
+      results.push(removal);
+      if (removal.status === "failed") {
+        continue;
       }
     }
-    results.push(result);
+    if (target.kind === "branch") {
+      results.push(await deleteBranchWithFallback(target.name, options.force, confirmForceDelete));
+    }
   }
 
   printSummary(results);
