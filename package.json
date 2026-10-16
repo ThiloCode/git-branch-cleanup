@@ -12,7 +12,8 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "start": "node dist/bin.js"
+    "start": "node dist/bin.js",
+    "playground": "node scripts/playground.mjs"
   },
   "engines": {
     "node": ">=18"

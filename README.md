@@ -58,4 +58,9 @@ git-branch-cleanup
 ```bash
 npm run dev    # tsc --watch
 npm run build  # one-off build to dist/
+npm run playground [-- <dir>]  # sandbox repo with branches and worktrees in every state
 ```
+
+The playground defaults to `git-branch-cleanup-playground` in the system temp
+directory and prints what each branch and worktree is meant to demonstrate.
+Run it again to reset the sandbox. It only deletes a folder it created itself.
