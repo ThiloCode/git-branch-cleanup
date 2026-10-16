@@ -1,12 +1,14 @@
 import { checkbox, confirm, Separator } from "@inquirer/prompts";
 import pc from "picocolors";
-import { worktreeLabel } from "./format.js";
+import { worktreeLabel, worktreeRelativePath } from "./format.js";
+import { type Column, formatTable } from "./table.js";
 import type { BranchInfo, CleanupTarget, WorktreeInfo } from "./types.js";
 
 function lossWarnings(worktree: WorktreeInfo): string[] {
   const warnings: string[] = [];
   if (worktree.commitsNotOnAnyBranch > 0) {
-    warnings.push(`${worktree.commitsNotOnAnyBranch} commit(s) not on any branch`);
+    const count = worktree.commitsNotOnAnyBranch;
+    warnings.push(`${count} ${count === 1 ? "commit" : "commits"} not on any branch`);
   }
   if (worktree.hasUncommittedChanges) {
     warnings.push("uncommitted changes");
@@ -34,24 +36,46 @@ function worktreeDetails(worktree: WorktreeInfo): string[] {
   ];
 }
 
-function formatBranchLabel(branch: BranchInfo): string {
-  const details: string[] = [];
+const COLUMNS: Column[] = [
+  { header: "BRANCH", minWidth: 18 },
+  { header: "STATUS" },
+  { header: "LAST COMMIT" },
+  { header: "WORKTREE", minWidth: 8 },
+  { header: "NOTES", minWidth: 5 },
+];
+
+const CHOICE_PREFIX_WIDTH = 3;
+const FALLBACK_TERMINAL_WIDTH = 80;
+
+function branchStatus(branch: BranchInfo): string {
   if (branch.isMerged) {
-    details.push(pc.green("merged"));
-  } else if (branch.aheadBehind) {
+    return pc.green("merged");
+  }
+  if (branch.aheadBehind) {
     const { ahead, behind } = branch.aheadBehind;
-    details.push(pc.yellow(`${ahead} ahead, ${behind} behind`));
+    return pc.yellow(`${ahead} ahead, ${behind} behind`);
   }
-  if (branch.worktree) {
-    details.push(pc.cyan(worktreeLabel(branch.worktree.path)), ...worktreeDetails(branch.worktree));
-  }
-  details.push(pc.dim(branch.lastCommitRelativeDate));
-  return `${branch.name}  ${pc.dim("·")}  ${details.join(pc.dim(" · "))}`;
+  return "";
 }
 
-function formatWorktreeLabel(worktree: WorktreeInfo): string {
-  const details = [pc.dim(`detached at ${worktree.head.slice(0, 7)}`), ...worktreeDetails(worktree)];
-  return `${worktreeLabel(worktree.path)}  ${pc.dim("·")}  ${details.join(pc.dim(" · "))}`;
+function worktreeCells(worktree: WorktreeInfo | undefined): string[] {
+  if (!worktree) {
+    return ["", ""];
+  }
+  return [pc.cyan(worktreeRelativePath(worktree.path)), worktreeDetails(worktree).join(pc.dim(", "))];
+}
+
+function branchRow(branch: BranchInfo): string[] {
+  return [
+    branch.name,
+    branchStatus(branch),
+    pc.dim(branch.lastCommitRelativeDate),
+    ...worktreeCells(branch.worktree),
+  ];
+}
+
+function detachedWorktreeRow(worktree: WorktreeInfo): string[] {
+  return [pc.dim(`(detached ${worktree.head.slice(0, 7)})`), "", "", ...worktreeCells(worktree)];
 }
 
 function requiresDeliberateChoice(worktree: WorktreeInfo | undefined): boolean {
@@ -69,19 +93,29 @@ export async function promptCleanupSelection(
     return [];
   }
 
+  const terminalWidth = process.stdout.columns || FALLBACK_TERMINAL_WIDTH;
+  const table = formatTable(
+    COLUMNS,
+    [...selectable.map(branchRow), ...worktrees.map(detachedWorktreeRow)],
+    terminalWidth - CHOICE_PREFIX_WIDTH,
+  );
+  const heading = " ".repeat(CHOICE_PREFIX_WIDTH) + pc.bold(table.heading);
+  const branchLabels = table.rows.slice(0, selectable.length);
+  const worktreeLabels = table.rows.slice(selectable.length);
+
   const choices = [
     ...(current
       ? [new Separator(pc.dim(`(current branch, not selectable: ${current.name})`))]
       : []),
-    ...selectable.map((branch) => ({
-      name: formatBranchLabel(branch),
+    ...selectable.map((branch, i) => ({
+      name: branchLabels[i],
       short: branch.name,
       value: { kind: "branch", name: branch.name, worktree: branch.worktree } as CleanupTarget,
       checked: branch.isMerged && !requiresDeliberateChoice(branch.worktree),
     })),
     ...(worktrees.length > 0 ? [new Separator(pc.dim("── Worktrees without a branch ──"))] : []),
-    ...worktrees.map((worktree) => ({
-      name: formatWorktreeLabel(worktree),
+    ...worktrees.map((worktree, i) => ({
+      name: worktreeLabels[i],
       short: worktreeLabel(worktree.path),
       value: { kind: "worktree", worktree } as CleanupTarget,
       checked: worktree.isMissing && !requiresDeliberateChoice(worktree),
@@ -93,6 +127,11 @@ export async function promptCleanupSelection(
     choices,
     pageSize: 20,
     loop: false,
+    theme: {
+      style: {
+        message: (text: string, status: string) => (status === "done" ? pc.bold(text) : `${pc.bold(text)}\n${heading}`),
+      },
+    },
   });
 }
 
