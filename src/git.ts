@@ -50,6 +50,7 @@ interface WorktreeEntry {
   branch?: string;
   isBare: boolean;
   isLocked: boolean;
+  lockReason?: string;
 }
 
 function parseWorktreeList(output: string): WorktreeEntry[] {
@@ -77,6 +78,7 @@ function parseWorktreeList(output: string): WorktreeEntry[] {
             break;
           case "locked":
             entry.isLocked = true;
+            entry.lockReason = value || undefined;
             break;
         }
       }
@@ -108,6 +110,7 @@ async function listWorktrees(): Promise<WorktreeInfo[]> {
             isMain: index === 0,
             isCurrent: currentRoot !== undefined && samePath(entry.path, currentRoot),
             isLocked: entry.isLocked,
+            lockReason: entry.lockReason,
             isMissing: !existsSync(entry.path),
             hasUncommittedChanges: false,
             commitsNotOnAnyBranch: 0,
@@ -117,7 +120,7 @@ async function listWorktrees(): Promise<WorktreeInfo[]> {
 }
 
 export function isRemovable(worktree: WorktreeInfo): boolean {
-  return !worktree.isMain && !worktree.isCurrent && !worktree.isLocked;
+  return !worktree.isMain && !worktree.isCurrent;
 }
 
 async function inspectWorktree(worktree: WorktreeInfo): Promise<WorktreeInfo> {
@@ -220,10 +223,26 @@ export async function deleteBranch(name: string, force: boolean): Promise<Delete
   }
 }
 
+/**
+ * Unlocks a locked worktree first instead of using `remove -f -f`, which
+ * would also discard uncommitted changes without checking. If removal then
+ * fails, the lock is restored with its original reason.
+ */
 export async function removeWorktree(worktree: WorktreeInfo): Promise<DeleteResult> {
   const force = worktree.hasUncommittedChanges ? ["--force"] : [];
   try {
-    await git(["worktree", "remove", ...force, worktree.path]);
+    if (worktree.isLocked) {
+      await git(["worktree", "unlock", worktree.path]);
+    }
+    try {
+      await git(["worktree", "remove", ...force, worktree.path]);
+    } catch (error) {
+      if (worktree.isLocked) {
+        const reason = worktree.lockReason ? ["--reason", worktree.lockReason] : [];
+        await git(["worktree", "lock", ...reason, worktree.path]).catch(() => undefined);
+      }
+      throw error;
+    }
     return { name: worktree.path, status: "deleted" };
   } catch (error) {
     return { name: worktree.path, status: "failed", error: extractGitErrorMessage(error) };

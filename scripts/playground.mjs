@@ -84,6 +84,7 @@ branchWithCommits("feature/search", "main", [
 ]);
 branchWithCommits("bugfix/crash", "main", [["app.txt", "Fix crash on startup", 4]]);
 branchWithCommits("release/1.0", "main", [["CHANGELOG.md", "Prepare 1.0", 3]]);
+branchWithCommits("feature/offline-sync", "main", [["sync.txt", "Add offline sync", 2.8]]);
 commit(repo, "app.txt", "Add settings page", 2.5);
 commit(repo, "app.txt", "Add logging", 2);
 branchWithCommits("feature/dark-mode", "main", [
@@ -102,6 +103,10 @@ rmSync(worktree("crash", "bugfix/crash"), { recursive: true, force: true });
 
 worktree("release-1.0", "release/1.0");
 git(repo, ["worktree", "lock", "--reason", "release in progress", path.join(root, "release-1.0")]);
+
+const usbDrive = worktree("usb-sync", "feature/offline-sync");
+git(repo, ["worktree", "lock", "--reason", "on usb drive", usbDrive]);
+rmSync(usbDrive, { recursive: true, force: true });
 
 const review = worktree("review-pr-42", "--detach", "experiment/new-parser");
 commit(review, "parser.txt", "Review fixup, never pushed anywhere", 0.5);
@@ -127,7 +132,8 @@ What's in it:
   wip/old-idea                  1 ahead, ~4 months old
   feature/search                worktree with uncommitted changes (never pre-checked)
   bugfix/crash                  worktree folder deleted by hand
-  release/1.0                   locked worktree, not selectable
+  release/1.0                   locked worktree                 -> never pre-checked, unlocked before removal
+  feature/offline-sync          locked worktree, folder missing -> flagged as possibly on a disconnected drive
   review-pr-42 (detached)       1 commit on no branch + untracked file (never pre-checked)
   scratch (detached)            clean
   old-checkout (detached)       folder deleted by hand          -> pre-checked

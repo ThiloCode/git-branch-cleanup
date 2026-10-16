@@ -151,7 +151,7 @@ async function main(): Promise<void> {
   if (blockedByWorktree.length > 0) {
     console.log(
       pc.dim(
-        `Checked out in the main or a locked worktree (not shown): ${blockedByWorktree.map((b) => b.name).join(", ")}`,
+        `Checked out in the main worktree (not shown): ${blockedByWorktree.map((b) => b.name).join(", ")}`,
       ),
     );
   }

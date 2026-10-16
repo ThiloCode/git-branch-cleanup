@@ -14,9 +14,22 @@ function lossWarnings(worktree: WorktreeInfo): string[] {
   return warnings;
 }
 
+function lockNote(worktree: WorktreeInfo): string | undefined {
+  if (!worktree.isLocked) {
+    return undefined;
+  }
+  return worktree.lockReason ? `locked: ${worktree.lockReason}` : "locked";
+}
+
 function worktreeDetails(worktree: WorktreeInfo): string[] {
+  const lock = lockNote(worktree);
   return [
-    ...(worktree.isMissing ? [pc.dim("folder missing")] : []),
+    ...(lock ? [pc.yellow(lock)] : []),
+    ...(worktree.isMissing && worktree.isLocked
+      ? [pc.red("folder missing (possibly on a disconnected drive)")]
+      : worktree.isMissing
+        ? [pc.dim("folder missing")]
+        : []),
     ...lossWarnings(worktree).map((warning) => pc.red(warning)),
   ];
 }
@@ -41,8 +54,8 @@ function formatWorktreeLabel(worktree: WorktreeInfo): string {
   return `${worktreeLabel(worktree.path)}  ${pc.dim("·")}  ${details.join(pc.dim(" · "))}`;
 }
 
-function canLoseWork(worktree: WorktreeInfo | undefined): boolean {
-  return worktree !== undefined && lossWarnings(worktree).length > 0;
+function requiresDeliberateChoice(worktree: WorktreeInfo | undefined): boolean {
+  return worktree !== undefined && (worktree.isLocked || lossWarnings(worktree).length > 0);
 }
 
 export async function promptCleanupSelection(
@@ -64,14 +77,14 @@ export async function promptCleanupSelection(
       name: formatBranchLabel(branch),
       short: branch.name,
       value: { kind: "branch", name: branch.name, worktree: branch.worktree } as CleanupTarget,
-      checked: branch.isMerged && !canLoseWork(branch.worktree),
+      checked: branch.isMerged && !requiresDeliberateChoice(branch.worktree),
     })),
     ...(worktrees.length > 0 ? [new Separator(pc.dim("── Worktrees without a branch ──"))] : []),
     ...worktrees.map((worktree) => ({
       name: formatWorktreeLabel(worktree),
       short: worktreeLabel(worktree.path),
       value: { kind: "worktree", worktree } as CleanupTarget,
-      checked: worktree.isMissing && !canLoseWork(worktree),
+      checked: worktree.isMissing && !requiresDeliberateChoice(worktree),
     })),
   ];
 
@@ -89,8 +102,13 @@ function formatTargetSummary(target: CleanupTarget): string {
     target.kind === "branch"
       ? target.name + (worktree ? pc.dim(` and ${worktreeLabel(worktree.path)}`) : "")
       : worktreeLabel(target.worktree.path);
+  const lock = worktree && lockNote(worktree);
   const warnings = worktree ? lossWarnings(worktree) : [];
-  return warnings.length > 0 ? `${label} ${pc.red(`(${warnings.join(", ")} will be lost)`)}` : label;
+  return [
+    label,
+    ...(lock ? [pc.yellow(`(${lock}, will be unlocked)`)] : []),
+    ...(warnings.length > 0 ? [pc.red(`(${warnings.join(", ")} will be lost)`)] : []),
+  ].join(" ");
 }
 
 export async function confirmDeletion(selected: CleanupTarget[]): Promise<boolean> {

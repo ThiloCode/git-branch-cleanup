@@ -5,6 +5,7 @@ export interface WorktreeInfo {
   isMain: boolean;
   isCurrent: boolean;
   isLocked: boolean;
+  lockReason?: string;
   isMissing: boolean;
   hasUncommittedChanges: boolean;
   commitsNotOnAnyBranch: number;

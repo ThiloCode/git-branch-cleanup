@@ -40,8 +40,12 @@ git-branch-cleanup
   any branch, tag, or remote branch. Removing such a worktree loses those
   commits and changes, so these rows are never pre-checked, even when the
   branch is merged. Selecting one force-removes it without asking again.
-- Branches checked out in the main worktree, in a locked worktree, or in the
-  worktree you run the tool from can't be selected.
+- Locked worktrees are listed with their lock reason and never pre-checked.
+  Selecting one unlocks it before removal; if removal then fails, the lock is
+  restored with its original reason. A locked worktree whose folder is missing
+  is flagged as possibly living on a disconnected drive.
+- Branches checked out in the main worktree, or in the worktree you run the
+  tool from, can't be selected.
 
 ### Options
 
